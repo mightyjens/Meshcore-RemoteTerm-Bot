@@ -7,6 +7,16 @@ DB_PATH = "/opt/Remote-Terminal-for-MeshCore/data/meshcore.db"
 MAX_HOPS = 10
 MAX_MSG_LENGTH = 220
 
+BOT_PREFIXES = ("pong!", "ack ", "path ", "(continues)")
+
+# Channel configuration: Channel → allowed keywords (None = all)
+CHANNEL_CONFIG = {
+    "#ping": {"ping"},
+    "#test": {"test"},
+    #"#customroom": None
+}
+
+
 def resolve_path(path_hex: str, bytes_per_hop: int) -> list[str]:
     if not path_hex or not bytes_per_hop:
         return []
@@ -26,12 +36,12 @@ def resolve_path(path_hex: str, bytes_per_hop: int) -> list[str]:
     except Exception:
         return ["[path unavailable]"]
 
+
 def build_path_messages(name: str, resolved: list[str]) -> list[str]:
     """
-    Baut eine oder mehrere Nachrichten aus den aufgelösten Hop-Namen.
-    Hops werden nummeriert. Bei Überschreitung von MAX_MSG_LENGTH wird
-    die Nachricht gesplittet; der letzte Hop vor dem Split erhält '...'
-    als Hinweis auf Fortsetzung.
+    Builds one or more messages from the resolved hop names.
+    Hops are numbered. If MAX_MSG_LENGTH is exceeded, the message is split;
+    the last hop before the split is replaced with '...' to indicate continuation.
     """
     numbered = [f"{i+1}. {name}" for i, name in enumerate(resolved)]
     messages = []
@@ -49,13 +59,14 @@ def build_path_messages(name: str, resolved: list[str]) -> list[str]:
                 lines[-1] = "..."
                 current = "\n".join(lines) + "\n"
             messages.append(current.rstrip("\n"))
-            current = f"(Fortsetzung)\n"
+            current = "(continues)\n"
     if current.strip():
         messages.append(current.rstrip("\n"))
     return messages
 
+
 def get_rf_data(sender_timestamp: int) -> tuple[int | None, float | None, int | None]:
-    """Gibt (rssi, snr, received_at) zurück."""
+    """Returns (rssi, snr, received_at)."""
     if not sender_timestamp:
         return None, None, None
     try:
@@ -77,6 +88,7 @@ def get_rf_data(sender_timestamp: int) -> tuple[int | None, float | None, int | 
         pass
     return None, None, None
 
+
 def bot(**kwargs) -> str | list[str] | None:
     sender_name = kwargs.get("sender_name")
     message_text = kwargs.get("message_text", "")
@@ -89,23 +101,17 @@ def bot(**kwargs) -> str | list[str] | None:
     if is_outgoing:
         return None
 
-    # Eigene Bot-Antworten ignorieren (Schutz gegen Endlosschleife)
+    # Ignore own bot replies (protection against infinite loops)
     msg = message_text.strip().lower()
-    BOT_PREFIXES = ("pong!", "ack ", "path ", "(fortsetzung)")
     if any(msg.startswith(p) for p in BOT_PREFIXES):
         return None
 
-    # Channel-Konfiguration: Channel → erlaubte Keywords (None = alle)
-    CHANNEL_CONFIG = {
-        "#ping":     {"ping"},
-        "#test":     {"test"},
-    }
     if channel_name not in CHANNEL_CONFIG:
         return None
 
     allowed_keywords = CHANNEL_CONFIG[channel_name]
 
-    # Hop-Anzahl berechnen
+    # Calculate hop count
     if not path:
         hops = 0
     elif path_bytes_per_hop:
@@ -124,7 +130,7 @@ def bot(**kwargs) -> str | list[str] | None:
 
     if "test" in msg and (allowed_keywords is None or "test" in allowed_keywords):
         rssi, snr, received_at = get_rf_data(sender_timestamp)
-        # Pfad als kommagetrennte Kurzform
+        # Path as comma-separated shortform
         if path and path_bytes_per_hop:
             hex_per_hop = path_bytes_per_hop * 2
             hop_hashes = [path[i:i+hex_per_hop] for i in range(0, len(path), hex_per_hop)]
