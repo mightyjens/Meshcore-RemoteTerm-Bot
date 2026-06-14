@@ -1,114 +1,238 @@
-# Ping Bot for RemoteTerm Example
-**MeshCore channel bot** for `#ping` and `#test`. Responds to `ping`, `test`, and `path` commands on incoming messages.
-Runs inside [RemoteTerm for MeshCore](https://github.com/jkingsman/Remote-Terminal-for-MeshCore) — a backend server with web UI, bot system, MQTT forwarding, and more. Bots are stored as Python files and managed via the API. The `bot(**kwargs)` function is the entry point — RemoteTerm calls it for every incoming message and sends the return value as a reply.
+# MeshCore RemoteTerm Ping/Test/Path Bot
 
-> **Note:** This bot is designed for use with the bot framework of [jkingsman/Remote-Terminal-for-MeshCore](https://github.com/jkingsman/Remote-Terminal-for-MeshCore) and requires its runtime environment.
-Database path: `/opt/Remote-Terminal-for-MeshCore/data/meshcore.db`
+A example bot for the Python bot framework provided by
+[jkingsman/Remote-Terminal-for-MeshCore](https://github.com/jkingsman/Remote-Terminal-for-MeshCore).
+
+This bot responds to diagnostic keywords (`ping`, `test`, `path`) in configurable MeshCore
+channels and returns RF metrics, hop counts, and resolved routing paths — useful for network
+testing and coverage verification.
+
 ---
-## Commands
-| Keyword | Channel(s) | Response |
-|---------|------------|----------|
-| `ping` | `#ping` | `Pong! @[Name] | N Hops` |
-| `test` | `#test` | `ACK @[Name] | <path or "direct"> (N Hops) | SNR: X dB | RSSI: X dBm | Received at: HH:MM:SS` |
-| `path` | `#ping` | Numbered list of all routing hops from sender to this node, split across multiple messages if needed |
+
+## Features
+
+- **`ping`** — Replies with a pong message and the number of hops
+- **`test`** — Replies with hop count, SNR, RSSI, and message reception timestamp
+- **`path`** — Replies with the fully resolved hop-by-hop routing path (node names looked up
+  from the RemoteTerm database); automatically splits into multiple messages if the path
+  exceeds the MeshCore message length limit
+- **Per-channel keyword filtering** — Each channel can be restricted to specific keywords
+- **Hop limit** — Ignores messages from nodes beyond a configurable maximum hop count
+- **Loop protection** — Ignores own outgoing messages and typical bot reply prefixes to
+  prevent infinite reply loops
+
 ---
+
+## Requirements
+
+- [Remote-Terminal-for-MeshCore](https://github.com/jkingsman/Remote-Terminal-for-MeshCore)
+  installed and running
+- A MeshCore companion radio connected via serial, TCP, or BLE
+- Python 3.11+ (provided by the RemoteTerm environment)
+- No additional dependencies — only Python standard library modules are used (`sqlite3`,
+  `json`, `re`, `datetime`)
+
+---
+
+## Installation
+
+1. Open the RemoteTerm web interface (`http://<your-server>:8000`)
+2. Navigate to the **Bots** section (Settings -> MQTT & Automation -> Add Integration -> Python Bot)
+3. Create a new bot and paste the contents of `bot.py` into the code editor
+4. Save and enable the bot
+
+The bot code is executed directly by RemoteTerm's bot framework on every incoming message.
+No separate process or service is required.
+
+---
+
 ## Configuration
-`CHANNEL_CONFIG` and `BOT_PREFIXES` are defined as module-level constants at the top of the script and are the primary place to customize the bot's behavior.
 
-### Adding or removing channels
-Each entry in `CHANNEL_CONFIG` maps a channel name (including `#`) to a set of allowed keywords. To activate the bot in a channel, add it to the dict:
+All configuration is located at the top of `bot.py`:
 
 ```python
+# Path to the RemoteTerm SQLite database
+DB_PATH = "/opt/Remote-Terminal-for-MeshCore/data/meshcore.db"
+
+# Maximum hop count – messages from nodes further away will be ignored
+MAX_HOPS = 10
+
+# Maximum character length per MeshCore message
+MAX_MSG_LENGTH = 220
+
+# Channel configuration:
+# Key   = exact channel name as in MeshCore (including #)
+# Value = set of allowed keywords, or None to allow all keywords
 CHANNEL_CONFIG = {
-    "#ping": {"ping"},        # only responds to "ping"
-    "#test": {"test"},        # only responds to "test"
-    "#customroom": None,      # responds to all supported keywords
+    "#customchannel": None,     # all keywords allowed
+    "#ping":          {"ping"}, # only "ping"
+    "#test":          {"test"}, # only "test"
 }
 ```
 
-Channels not listed in `CHANNEL_CONFIG` are silently ignored.
+### Adding channels
 
-### Restricting keywords per channel
-The value for each channel entry controls which keywords the bot reacts to:
-
-- **`{"ping"}`** — only `ping` triggers a response in this channel
-- **`{"ping", "test"}`** — multiple keywords can be combined in a set
-- **`None`** — no restriction; all supported keywords (`ping`, `test`, `path`) are active
-
-### BOT_PREFIXES
-`BOT_PREFIXES` defines the prefixes that identify outgoing bot replies. Any incoming message starting with one of these strings is silently dropped to prevent the bot from responding to itself:
+Add an entry to `CHANNEL_CONFIG` with the exact channel name (including `#`) as used in
+MeshCore. Set the value to `None` to allow all keywords, or to a set of strings to restrict
+which keywords trigger a response in that channel:
 
 ```python
-BOT_PREFIXES = ("pong!", "ack ", "path ", "(continues)")
+CHANNEL_CONFIG = {
+    "#mychannel":  None,              # responds to ping, test, path
+    "#ping":       {"ping"},          # responds to ping only
+    "#diagnosis":  {"test", "path"},  # responds to test and path
+}
 ```
 
-If you add new reply formats, add their prefix here as well.
+### Adjusting the hop limit
+
+Set `MAX_HOPS` to control the maximum number of relay hops a message may have traveled.
+Messages arriving via more hops than this value are silently ignored:
+
+```python
+MAX_HOPS = 10  # ignore messages more than 10 hops away
+```
+
+### Adjusting the message length limit
+
+`MAX_MSG_LENGTH` controls when path responses are split into multiple messages. The default
+of 220 characters is a conservative value that works reliably across MeshCore firmware
+versions:
+
+```python
+MAX_MSG_LENGTH = 220
+```
 
 ---
-## Constants
-- `DB_PATH` — path to RemoteTerm's SQLite database
-- `MAX_HOPS = 10` — messages with more hops are silently ignored (anti-spam)
-- `MAX_MSG_LENGTH = 220` — maximum character length per outgoing message (LoRa limit)
+
+## Keyword Reference
+
+All keywords are matched **case-insensitively** and as substrings, so `"Ping"`, `"PING"`,
+and `"send a ping please"` all trigger the `ping` handler.
+
+### `ping`
+
+```
+→ Pong! @[SenderName] | 3 Hops
+```
+
+### `test`
+
+```
+→ ACK @[SenderName] | 3 Hops | SNR: 12.5 dB | RSSI: -78 dBm | Received at: 14:32:07
+```
+
+If the message arrived directly (no relay hops):
+
+```
+→ ACK @[SenderName] | direct (0 Hops) | SNR: 14.0 dB | RSSI: -51 dBm | Received at: 11:20:31
+```
+
+### `path`
+
+Single message (short path):
+
+```
+Path @[SenderName]:
+1. Region-Alpha-Repeater
+2. Some-Solar-Node
+3. Region-Beta-Repeater
+```
+
+Split across two messages (long path or long node names):
+
+**Message 1:**
+```
+Path @[SenderName]:
+1. Region-Alpha-Repeater
+2. Some-Solar-Node
+3. Region-Beta-Repeater
+...
+```
+
+**Message 2:**
+```
+(continued)
+4. [a1b2c3d4]
+5. Region-Gamma-Repeater
+```
+
+Unknown nodes (not present in the RemoteTerm database) are shown as their hex short form,
+e.g. `[82bf61d3]`.
+
 ---
-## Functions
-### `resolve_path(path_hex, bytes_per_hop) → list[str]`
-Converts the raw routing path (hex string from the radio) into human-readable node names.
-- `path_hex` is a continuous hex string, e.g. `"aabbccdd11223344"` for two hops at 4 bytes each
-- `bytes_per_hop` specifies how many bytes are encoded per hop (provided by the radio via `path_bytes_per_hop`)
-- For each hop block, the public key is looked up in the `contacts` table using a `LIKE hex%` prefix match
-- If no contact is found, the raw hex block is returned as `[aabbccdd]`
-- On database error: returns `["[path unavailable]"]`
-### `build_path_messages(name, resolved) → list[str]`
-Formats the resolved hop names into one or more messages that fit within the LoRa length limit.
-- Hops are numbered: `1. NodeA`, `2. NodeB`, …
-- The first message starts with `Path @[Name]:`
-- If another hop would exceed `MAX_MSG_LENGTH`, the current message is closed with `...` and a new one begins with `(Fortsetzung)`
-- Returns a list of strings — RemoteTerm sends each entry as a separate message
-### `get_rf_data(sender_timestamp) → (rssi, snr, received_at)`
-Reads RSSI, SNR, and reception timestamp from the database for a received message.
-- Looks up the `messages` table by `sender_timestamp` (unique sender-side timestamp)
-- `paths` is a JSON array; the first entry contains the RF data of the direct receiver
-- `received_at` is a Unix timestamp (formatted as UTC time in the reply)
-- Returns all three values as `None` if the timestamp is missing or a DB error occurs
-### `test` Command
-When a sender writes `test` in a configured channel, the bot replies with a full diagnostic line:
 
-```
-ACK @[Name] | <path_str> | SNR: X dB | RSSI: X dBm | Received at: HH:MM:SS
+## How Path Resolution Works
+
+MeshCore encodes routing paths as concatenated shortened public key hashes. With
+`path.hash.mode 1` (the default for most networks), each hop is represented by 2 bytes
+(4 hex characters).
+
+The bot splits the raw hex path string into individual hop segments and looks each one up
+in the RemoteTerm `contacts` table using a `LIKE` prefix match against the full public key:
+
+```sql
+SELECT name FROM contacts WHERE public_key LIKE 'a1b2%' LIMIT 1
 ```
 
-The individual fields are assembled as follows:
+This allows node names to be resolved without storing a separate hash-to-name mapping.
 
-- **`path_str`** — if the message was relayed, the raw hex blocks for each hop are listed comma-separated followed by the hop count, e.g. `aabbccdd,11223344 (2 Hops)`. For a direct connection, `direct (0 Hops)` is used.
-- **SNR / RSSI** — read from the database via `get_rf_data()` using the sender timestamp. Both fields are optional and omitted if not available.
-- **Received at** — UTC reception time (`HH:MM:SS`), also from the database. Omitted if not available.
+---
 
-### `path` Command
-When a sender writes `path` in a configured channel, the bot resolves the full routing path of the incoming message and replies with a numbered list of all intermediate nodes between the sender and this node.
+## How RF Metrics Are Retrieved
 
-- The raw path is read from the `path` parameter (hex string provided by the radio firmware)
-- `resolve_path()` converts each hop block into a human-readable node name by looking up the contact's public key in the database
-- Unknown nodes are shown as their raw hex value, e.g. `[aabbccdd]`
-- `build_path_messages()` formats the result into one or more messages, each prefixed with `Path @[Name]:` — if the full list exceeds `MAX_MSG_LENGTH`, it is split across multiple messages with `(Fortsetzung)` continuations
-- If the message arrived directly (no hops), the path will be empty
+RSSI, SNR, and reception timestamps are not passed directly to the bot via kwargs.
+Instead, the bot queries the RemoteTerm `messages` table using the `sender_timestamp`
+field, which is available in the bot kwargs and unique enough for a reliable lookup:
 
-### `bot(**kwargs) → str | list[str] | None`
-Entry point — called by RemoteTerm for every message.
-**Incoming parameters:**
-| Parameter | Description |
-|-----------|-------------|
-| `sender_name` | Display name of the sender |
-| `message_text` | Message content |
-| `channel_name` | Channel name including `#`, e.g. `#ping` |
-| `is_outgoing` | `True` for messages sent by this node |
-| `path` | Routing path as hex string (empty for direct connections) |
-| `path_bytes_per_hop` | Bytes per hop as reported by the radio firmware |
-| `sender_timestamp` | Sender-side timestamp (used for DB lookup) |
-**Processing order:**
-1. Immediately ignore outgoing messages (`is_outgoing`)
-2. Ignore own bot replies based on `BOT_PREFIXES` — prevents infinite loops
-3. Check channel: only configured channels are processed
-4. Optionally restrict allowed keywords per channel (`CHANNEL_CONFIG`)
-5. Calculate hop count and check against `MAX_HOPS`
-6. Build and return the appropriate reply based on keyword (`ping` / `test` / `path`)
-**Return value:** `None` = no reply, `str` = single message, `list[str]` = multiple messages sent in sequence
+```sql
+SELECT paths, received_at FROM messages
+WHERE sender_timestamp = ? AND outgoing = 0
+ORDER BY id DESC LIMIT 1
+```
+
+The `paths` column contains a JSON array with per-path RF data:
+
+```json
+[{"path": "a1b2...", "rssi": -78, "snr": 12.5, "received_at": 1781437024}]
+```
+
+---
+
+## Loop Protection
+
+The bot uses two independent mechanisms to prevent infinite reply loops:
+
+1. **`is_outgoing` guard** — RemoteTerm sets this flag on messages sent by the bot itself.
+   The bot returns `None` immediately for any outgoing message.
+
+2. **`BOT_PREFIXES` guard** — The bot checks whether the incoming message starts with a
+   known bot reply prefix and ignores it if so:
+
+```python
+BOT_PREFIXES = ("pong!", "ack ", "path ", "(continued)")
+```
+
+This prevents loops even if another bot on the network replies to the bot's own responses.
+
+---
+
+## Bot Framework Notes
+
+This bot is designed for the RemoteTerm bot framework. Key framework characteristics:
+
+- The `bot(**kwargs)` function is called for **every incoming message**, including channel
+  messages and direct messages
+- Return `None` to send no reply
+- Return a `str` to send a single reply
+- Return a `list[str]` to send multiple replies in order
+- Bots execute arbitrary Python via `exec()` with full `__builtins__` — only deploy in
+  trusted network environments
+- Full bot framework documentation and the `kwargs` reference are available in the
+  RemoteTerm repository: [jkingsman/Remote-Terminal-for-MeshCore](https://github.com/jkingsman/Remote-Terminal-for-MeshCore)
+
+---
+
+## License
+
+MIT
