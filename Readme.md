@@ -1,5 +1,5 @@
 # Ping Bot
-**MeshCore channel bot** for `#ping` and `#test`. Responds to `ping` and `test` commands on incoming messages.
+**MeshCore channel bot** for `#ping` and `#test` (and other channels). Responds to `ping`, `test`, and `path` commands on incoming messages.
 Runs inside [RemoteTerm for MeshCore](https://github.com/jkingsman/Remote-Terminal-for-MeshCore) — a backend server with web UI, bot system, MQTT forwarding, and more. Bots are stored as Python files and managed via the API. The `bot(**kwargs)` function is the entry point — RemoteTerm calls it for every incoming message and sends the return value as a reply.
 
 > **Note:** This bot is designed for use with the bot framework of [jkingsman/Remote-Terminal-for-MeshCore](https://github.com/jkingsman/Remote-Terminal-for-MeshCore) and requires its runtime environment.
@@ -9,7 +9,8 @@ Database path: `/opt/Remote-Terminal-for-MeshCore/data/meshcore.db`
 | Keyword | Channel(s) | Response |
 |---------|------------|----------|
 | `ping` | `#ping` | `Pong! @[Name] | N Hops` |
-| `test` | `#test` | `ACK @[Name] | path (hex) | SNR | RSSI | time UTC` |
+| `test` | `#test` | `ACK @[Name] | <path or "direct"> (N Hops) | SNR: X dB | RSSI: X dBm | Received at: HH:MM:SS` |
+| `path` | `#ping` | Numbered list of all routing hops from sender to this node, split across multiple messages if needed |
 ---
 ## Constants
 - `DB_PATH` — path to RemoteTerm's SQLite database
@@ -36,6 +37,28 @@ Reads RSSI, SNR, and reception timestamp from the database for a received messag
 - `paths` is a JSON array; the first entry contains the RF data of the direct receiver
 - `received_at` is a Unix timestamp (formatted as UTC time in the reply)
 - Returns all three values as `None` if the timestamp is missing or a DB error occurs
+### `test` Command
+When a sender writes `test` in a configured channel, the bot replies with a full diagnostic line:
+
+```
+ACK @[Name] | <path_str> | SNR: X dB | RSSI: X dBm | Received at: HH:MM:SS
+```
+
+The individual fields are assembled as follows:
+
+- **`path_str`** — if the message was relayed, the raw hex blocks for each hop are listed comma-separated followed by the hop count, e.g. `aabbccdd,11223344 (2 Hops)`. For a direct connection, `direct (0 Hops)` is used.
+- **SNR / RSSI** — read from the database via `get_rf_data()` using the sender timestamp. Both fields are optional and omitted if not available.
+- **Received at** — UTC reception time (`HH:MM:SS`), also from the database. Omitted if not available.
+
+### `path` Command
+When a sender writes `path` in a configured channel, the bot resolves the full routing path of the incoming message and replies with a numbered list of all intermediate nodes between the sender and this node.
+
+- The raw path is read from the `path` parameter (hex string provided by the radio firmware)
+- `resolve_path()` converts each hop block into a human-readable node name by looking up the contact's public key in the database
+- Unknown nodes are shown as their raw hex value, e.g. `[aabbccdd]`
+- `build_path_messages()` formats the result into one or more messages, each prefixed with `Path @[Name]:` — if the full list exceeds `MAX_MSG_LENGTH`, it is split across multiple messages with `(Fortsetzung)` continuations
+- If the message arrived directly (no hops), the path will be empty
+
 ### `bot(**kwargs) → str | list[str] | None`
 Entry point — called by RemoteTerm for every message.
 **Incoming parameters:**
@@ -54,5 +77,5 @@ Entry point — called by RemoteTerm for every message.
 3. Check channel: only configured channels are processed
 4. Optionally restrict allowed keywords per channel (`CHANNEL_CONFIG`)
 5. Calculate hop count and check against `MAX_HOPS`
-6. Build and return the appropriate reply based on keyword (`ping` / `test`)
+6. Build and return the appropriate reply based on keyword (`ping` / `test` / `path`)
 **Return value:** `None` = no reply, `str` = single message, `list[str]` = multiple messages sent in sequence
