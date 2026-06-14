@@ -1,4 +1,4 @@
-# Ping Bot for RemoteTerm
+# Ping Bot for RemoteTerm Example
 **MeshCore channel bot** for `#ping` and `#test`. Responds to `ping`, `test`, and `path` commands on incoming messages.
 Runs inside [RemoteTerm for MeshCore](https://github.com/jkingsman/Remote-Terminal-for-MeshCore) — a backend server with web UI, bot system, MQTT forwarding, and more. Bots are stored as Python files and managed via the API. The `bot(**kwargs)` function is the entry point — RemoteTerm calls it for every incoming message and sends the return value as a reply.
 
