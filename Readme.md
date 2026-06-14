@@ -1,5 +1,5 @@
 # Ping Bot
-**MeshCore channel bot** for `#ping` and `#test` (and other channels). Responds to `ping`, `test`, and `path` commands on incoming messages.
+**MeshCore channel bot** for `#ping` and `#test`. Responds to `ping`, `test`, and `path` commands on incoming messages.
 Runs inside [RemoteTerm for MeshCore](https://github.com/jkingsman/Remote-Terminal-for-MeshCore) — a backend server with web UI, bot system, MQTT forwarding, and more. Bots are stored as Python files and managed via the API. The `bot(**kwargs)` function is the entry point — RemoteTerm calls it for every incoming message and sends the return value as a reply.
 
 > **Note:** This bot is designed for use with the bot framework of [jkingsman/Remote-Terminal-for-MeshCore](https://github.com/jkingsman/Remote-Terminal-for-MeshCore) and requires its runtime environment.
@@ -11,6 +11,39 @@ Database path: `/opt/Remote-Terminal-for-MeshCore/data/meshcore.db`
 | `ping` | `#ping` | `Pong! @[Name] | N Hops` |
 | `test` | `#test` | `ACK @[Name] | <path or "direct"> (N Hops) | SNR: X dB | RSSI: X dBm | Received at: HH:MM:SS` |
 | `path` | `#ping` | Numbered list of all routing hops from sender to this node, split across multiple messages if needed |
+---
+## Configuration
+`CHANNEL_CONFIG` and `BOT_PREFIXES` are defined as module-level constants at the top of the script and are the primary place to customize the bot's behavior.
+
+### Adding or removing channels
+Each entry in `CHANNEL_CONFIG` maps a channel name (including `#`) to a set of allowed keywords. To activate the bot in a channel, add it to the dict:
+
+```python
+CHANNEL_CONFIG = {
+    "#ping": {"ping"},        # only responds to "ping"
+    "#test": {"test"},        # only responds to "test"
+    "#customroom": None,      # responds to all supported keywords
+}
+```
+
+Channels not listed in `CHANNEL_CONFIG` are silently ignored.
+
+### Restricting keywords per channel
+The value for each channel entry controls which keywords the bot reacts to:
+
+- **`{"ping"}`** — only `ping` triggers a response in this channel
+- **`{"ping", "test"}`** — multiple keywords can be combined in a set
+- **`None`** — no restriction; all supported keywords (`ping`, `test`, `path`) are active
+
+### BOT_PREFIXES
+`BOT_PREFIXES` defines the prefixes that identify outgoing bot replies. Any incoming message starting with one of these strings is silently dropped to prevent the bot from responding to itself:
+
+```python
+BOT_PREFIXES = ("pong!", "ack ", "path ", "(continues)")
+```
+
+If you add new reply formats, add their prefix here as well.
+
 ---
 ## Constants
 - `DB_PATH` — path to RemoteTerm's SQLite database
