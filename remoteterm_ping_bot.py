@@ -16,6 +16,9 @@ MAX_HOPS = 10
 # Maximum character length per MeshCore message
 MAX_MSG_LENGTH = 220
 
+# Maximum hop count for detailed path output in test response
+MAX_HOPS_DETAIL = 5
+
 # Channel configuration:
 # Key   = exact channel name as in MeshCore (including #)
 # Value = set of allowed keywords, or None to allow all keywords
@@ -24,7 +27,7 @@ MAX_MSG_LENGTH = 220
 # Example: {"ping"} → bot only responds to "ping" in this channel
 #          None     → bot responds to all keywords
 CHANNEL_CONFIG = {
-    "#customchannel": None,    # all keywords allowed
+    "#customchannel": None,     # all keywords allowed
     "#ping":          {"ping"}, # only "ping"
     "#test":          {"test"}, # only "test"
 }
@@ -164,6 +167,28 @@ def get_rf_data(sender_timestamp: int) -> tuple[int | None, float | None, int | 
     return None, None, None
 
 
+def get_path_hex_segments(path: str, bytes_per_hop: int) -> list[str]:
+    """
+    Splits the raw hex path into individual hop segments.
+
+    Segment length depends on bytes_per_hop:
+        1-byte → 2 hex characters per segment
+        2-byte → 4 hex characters per segment
+        3-byte → 6 hex characters per segment
+
+    Args:
+        path:          Raw hex path string
+        bytes_per_hop: Bytes per hop
+
+    Returns:
+        List of hex segments (e.g. ["3a71", "6263", "4a0c"])
+    """
+    if not path or not bytes_per_hop:
+        return []
+    hex_per_hop = bytes_per_hop * 2
+    return [path[i:i+hex_per_hop] for i in range(0, len(path), hex_per_hop)]
+
+
 # ──────────────────────────────────────────────
 # Bot entry point
 # ──────────────────────────────────────────────
@@ -175,7 +200,8 @@ def bot(**kwargs) -> str | list[str] | None:
 
     Supported keywords (case-insensitive):
         ping  → Replies with "Pong! @[Name] | N Hops"
-        test  → Replies with RF metrics: hops, SNR, RSSI, reception time
+        test  → Replies with hop count and raw path segments (if <= MAX_HOPS_DETAIL hops),
+                or hop count and byte mode only (if > MAX_HOPS_DETAIL hops)
         path  → Replies with resolved hop names (may be split across messages)
 
     Safety mechanisms:
@@ -235,25 +261,15 @@ def bot(**kwargs) -> str | list[str] | None:
 
     # ── test ──────────────────────────────────
     if "test" in msg and (allowed_keywords is None or "test" in allowed_keywords):
-        rssi, snr, received_at = get_rf_data(sender_timestamp)
+        if hops == 0:
+            return f"ACK {name} | direct"
 
-        path_str = "direct (0 Hops)" if hops == 0 else hop_label
-
-        rf = ""
-        if snr is not None:
-            rf += f" | SNR: {snr} dB"
-        if rssi is not None:
-            rf += f" | RSSI: {rssi} dBm"
-
-        time_str = ""
-        if received_at:
-            try:
-                dt = datetime.fromtimestamp(received_at, tz=timezone.utc).strftime("%H:%M:%S")
-                time_str = f" | Received at: {dt}"
-            except Exception:
-                pass
-
-        return f"ACK {name} | {path_str}{rf}{time_str}"
+        if hops <= MAX_HOPS_DETAIL and path and path_bytes_per_hop:
+            segments = get_path_hex_segments(path, path_bytes_per_hop)
+            path_str = ",".join(segments)
+            return f"ACK {name} | {hop_label} | {path_str} | {path_bytes_per_hop}-byte"
+        else:
+            return f"ACK {name} | {hop_label} | {path_bytes_per_hop}-byte"
 
     # ── path ──────────────────────────────────
     if "path" in msg and (allowed_keywords is None or "path" in allowed_keywords):
