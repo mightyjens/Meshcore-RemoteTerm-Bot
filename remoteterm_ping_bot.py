@@ -37,6 +37,29 @@ CHANNEL_CONFIG = {
 # Helper functions
 # ──────────────────────────────────────────────
 
+def is_keyword(msg: str, keyword: str) -> bool:
+    """
+    Returns True only if the message consists solely of the keyword,
+    optionally preceded by ! or / as a command prefix.
+    Prevents triggering on keywords embedded in sentences.
+
+    Examples:
+        "ping"    → True
+        "!ping"   → True
+        "/ping"   → True
+        "ping me" → False
+        "Path @[C3PO]: 1. Node ..." → False
+
+    Args:
+        msg:     Stripped and lowercased message text
+        keyword: Keyword to match (e.g. "ping", "test", "path")
+
+    Returns:
+        True if the message is exactly the keyword (with optional prefix)
+    """
+    return bool(re.fullmatch(rf'[!/]?{re.escape(keyword)}', msg.strip()))
+
+
 def resolve_path(path_hex: str, bytes_per_hop: int) -> list[str]:
     """
     Resolves a hex-encoded routing path into readable node names.
@@ -198,16 +221,18 @@ def bot(**kwargs) -> str | list[str] | None:
     Main function of the RemoteTerm bot. Called by RemoteTerm for every
     incoming message.
 
-    Supported keywords (case-insensitive):
+    Supported keywords (case-insensitive, must be sent as standalone command):
         ping  → Replies with "Pong! @[Name] | N Hops"
         test  → Replies with hop count and raw path segments (if <= MAX_HOPS_DETAIL hops),
                 or hop count and byte mode only (if > MAX_HOPS_DETAIL hops)
         path  → Replies with resolved hop names (may be split across messages)
 
+    Keywords embedded in sentences are ignored (e.g. "Path @[C3PO]: ..." will
+    not trigger the path handler). Optional ! or / prefix is supported (e.g. "!ping").
+
     Safety mechanisms:
         - is_outgoing guard: no response to own outgoing messages
-        - BOT_PREFIXES guard: no response to typical bot replies
-          (protection against infinite loops with other bots)
+        - is_keyword guard: only exact keyword matches trigger a response
         - MAX_HOPS limit: no response to nodes that are too far away
         - Channel filter: only configured channels are served
 
@@ -228,11 +253,7 @@ def bot(**kwargs) -> str | list[str] | None:
     if is_outgoing:
         return None
 
-    # Ignore typical bot replies (infinite loop protection)
     msg = message_text.strip().lower()
-    BOT_PREFIXES = ("pong!", "ack ", "path ", "(continued)")
-    if any(msg.startswith(p) for p in BOT_PREFIXES):
-        return None
 
     # Only respond in configured channels
     if channel_name not in CHANNEL_CONFIG:
@@ -256,11 +277,11 @@ def bot(**kwargs) -> str | list[str] | None:
     hop_label = f"{hops} Hop" if hops == 1 else f"{hops} Hops"
 
     # ── ping ──────────────────────────────────
-    if "ping" in msg and (allowed_keywords is None or "ping" in allowed_keywords):
+    if is_keyword(msg, "ping") and (allowed_keywords is None or "ping" in allowed_keywords):
         return f"Pong! {name} | {hop_label}"
 
     # ── test ──────────────────────────────────
-    if "test" in msg and (allowed_keywords is None or "test" in allowed_keywords):
+    if is_keyword(msg, "test") and (allowed_keywords is None or "test" in allowed_keywords):
         if hops == 0:
             return f"ACK {name} | direct"
 
@@ -272,7 +293,7 @@ def bot(**kwargs) -> str | list[str] | None:
             return f"ACK {name} | {hop_label} | {path_bytes_per_hop}-byte"
 
     # ── path ──────────────────────────────────
-    if "path" in msg and (allowed_keywords is None or "path" in allowed_keywords):
+    if is_keyword(msg, "path") and (allowed_keywords is None or "path" in allowed_keywords):
         if path:
             resolved = resolve_path(path, path_bytes_per_hop or 2)
             return build_path_messages(sender_name or "unknown", resolved)
